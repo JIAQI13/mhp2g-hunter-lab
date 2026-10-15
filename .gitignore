@@ -1,9 +1,14 @@
-# 源码存档使用白名单；原游戏、派生资源、缓存和凭据不进入Git。
+# 可运行工程使用白名单；只收录选定运行资源，原始游戏、研究数据、缓存和凭据不进入Git。
 *
 !/.gitignore
 !/godot-hunter-lab/
 !/godot-hunter-lab/project.godot
 !/godot-hunter-lab/main.tscn
+!/godot-hunter-lab/assets/
+!/godot-hunter-lab/assets/hunter_data.json
+!/godot-hunter-lab/assets/bulldrome_data.json
+!/godot-hunter-lab/assets/bulldrome_texture.png
+!/godot-hunter-lab/assets/bulldrome_texture.png.import
 !/godot-hunter-lab/scripts/
 !/godot-hunter-lab/scripts/*.gd
 !/godot-hunter-lab/scripts/*.gd.uid
