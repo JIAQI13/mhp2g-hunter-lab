@@ -19,6 +19,7 @@ const LIMITS = [
 	"只支持选定地面kind0 incoming；非零原碰撞窗口先拒绝，窗口为零的未知空中路径报告not_ready，不造新无敌计时。",
 	"按tick先提交上次incoming，再两actor唯一次采样，空间修正后hunter伤害先提交；死猪本tick不再伤人。已queued incoming下tick提交，败优先、终局锁定。",
 	"原攻击record寿命/timegate由两个AttackEvents拥有；当前pose接触，未实现武器/攻击胶囊连续扫掠。",
+	"新增激光波/臭屁为原创沙盒：SandboxSpecial独占时钟、固定几何、目标去重；session复用incoming，不直接扣HP。激光20/impact20、臭屁12/impact5；不声称原作规则。",
 ]
 
 var player: HunterController
@@ -139,16 +140,10 @@ func tick(input_snapshot: Dictionary) -> Dictionary:
 		events.append({"event":"incoming_not_ready", "reason":"selected ground kind0 only; unknown airborne incoming", "air280":player.state.air280})
 	var player_targets: Array[Dictionary] = [{"identity":"hunter", "generation":round_generation, "eligible":eligible and not unsupported_air, "volumes":_player_volumes(p)}]
 	for contact in monster_attack_events.tick(m, monster_animator, monster_lift, player_targets):
-		var impact: int = int(contact.byte2_raw)
-		var queued: Dictionary = player.queue_incoming(20, impact, _yaw(monster.state.position, player.state.position))
-		var hit: Dictionary = contact.duplicate(true)
-		hit.merge({"event":"incoming_contact", "damage":20, "impact":impact, "status":queued.status, "impact_policy":"byte2_raw sandbox adaptation, not full defense formula"}, true)
-		events.append(hit)
-		if queued.status in ["pending", "guarded"] and not queued.get("duplicate", false):
-			monster_hits += 1
-			_incoming_queued = true
-			_queued_source = contact.duplicate(true)
-			_queued_source.contact_tick = ticks + 1
+		_queue_contact(contact,20,int(contact.byte2_raw))
+	if m.alive:
+		for contact in monster.sandbox_special.contacts(player_targets):
+			_queue_contact(contact,int(contact.damage),int(contact.impact))
 	ticks += 1
 	if round_state == "running":
 		if int(player.state.hp) <= 0:
@@ -156,6 +151,18 @@ func tick(input_snapshot: Dictionary) -> Dictionary:
 		elif not monster.state.alive and not _incoming_queued:
 			_finish("victory")
 	return {"ready":true, "player":player.state.duplicate(true), "monster":monster.state.duplicate(true), "events":events.duplicate(true), "ticks":ticks, "round_state":round_state, "round_generation":round_generation, "hunter_hits":hunter_hits, "monster_hits":monster_hits, "last_monster_damage":last_monster_damage, "total_monster_damage":total_monster_damage, "space":space, "limits":limits.duplicate()}
+
+func _queue_contact(contact: Dictionary, damage: int, impact: int) -> void:
+	var source: Vector3 = contact.position*100.0 if contact.has("special") else monster.state.position
+	var queued: Dictionary = player.queue_incoming(damage,impact,_yaw(source,player.state.position))
+	var hit: Dictionary = contact.duplicate(true)
+	hit.merge({"event":"incoming_contact","damage":damage,"impact":impact,"status":queued.status,"impact_policy":"original sandbox special" if contact.has("special") else "byte2_raw sandbox adaptation, not full defense formula"},true)
+	events.append(hit)
+	if queued.status in ["pending","guarded"] and not queued.get("duplicate",false):
+		monster_hits += 1
+		_incoming_queued = true
+		_queued_source = contact.duplicate(true)
+		_queued_source.contact_tick = ticks+1
 
 func _append_actor_events(source: Array, actor: String) -> void:
 	for value in source:

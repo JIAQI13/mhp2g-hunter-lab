@@ -24,9 +24,14 @@ const LIMITS = [
 	"倒地phase>=10后等待倒地clip END作为平地落稳资格，未复刻09b58678动力/VFPU及09acfe98地形helper。",
 	"root由HunterAnimator唯一采样，entity旋转加一次；单位不缩放；未添加冲撞速度补偿，不声明PSP数值等价。",
 	"冲撞目标按攻击入口快照保留；root距离预算复用当tick唯一样本，达到距离后的收招在下一tick，无额外helper重采样。",
-	"攻击通知仅保留source record身份；不解读byte2_raw为power，不计算猎人HP；攻击寿命/接触由session拥有。",
+	"攻击通知仅保留source record身份；不解读byte2_raw为power，不计算猎人HP；原攻击寿命/接触由session中的AttackEvents拥有。",
+	"主场景显式开启原创沙盒特殊招式：两次原招后激光/臭屁；特殊招式独占SandboxSpecial，以待机pose显示，不声明原特殊动画/规则。臭屁选招接近距离260。",
 ]
 
+const Special = preload("res://scripts/sandbox_special.gd")
+var sandbox_special = Special.new()
+var sandbox_specials_enabled: bool = false
+var _sandbox_decision: int = 0
 var animator: HunterAnimator
 var state: Dictionary = {}
 var ai_enabled: bool = true
@@ -56,6 +61,8 @@ func configure(value: HunterAnimator) -> bool:
 	return state.ready
 
 func reset(position: Vector3 = Vector3(0, 0, -500)) -> void:
+	sandbox_special.reset()
+	_sandbox_decision = 0
 	_pending_reaction = ""
 	_source_yaw = 0
 	_light_damage = 0
@@ -73,7 +80,7 @@ func reset(position: Vector3 = Vector3(0, 0, -500)) -> void:
 		"cooldown_ticks":0, "recovery_ticks":0, "rage_ticks":0, "quadrant":0,
 		"target_position":Vector3.ZERO, "events":[], "source_labels":SOURCE_LABELS.duplicate(true),
 		"limits":LIMITS.duplicate(), "policy":"explicit_sandbox", "root_delta":Vector3.ZERO,
-		"world_root_delta":Vector3.ZERO, "approach_delta":Vector3.ZERO}
+		"world_root_delta":Vector3.ZERO, "approach_delta":Vector3.ZERO, "special":sandbox_special.snapshot()}
 	if _configured:
 		state.ready = animator.set_animation(1001, 0, 0)
 
@@ -120,13 +127,17 @@ func tick(player_snapshot: Dictionary) -> Dictionary:
 				_idle(0, 0)
 		elif recovering:
 			_recovery_tick()
+		elif state.mode == "special":
+			sandbox_special.tick()
+			if sandbox_special.kind == "":
+				_idle()
 		elif state.mode == "charge":
 			_charge_tick()
 		elif state.mode == "turn_attack":
 			_turn_attack_tick()
 		else:
 			_decide(player_snapshot)
-	var frozen: bool = state.mode == "dead" or (state.mode == "idle" and (not ai_enabled or int(player_snapshot.get("hp", 0)) <= 0 or not bool(player_snapshot.get("alive", true))))
+	var frozen: bool = state.mode in ["dead", "special"] or (state.mode == "idle" and (not ai_enabled or int(player_snapshot.get("hp", 0)) <= 0 or not bool(player_snapshot.get("alive", true))))
 	state.playback_step = 0.0 if frozen else 2.0 * float(state.rate)
 	# 每simulation调用唯一次tick；root已从world_pose清除，不在view再积分。
 	var sample: Dictionary = animator.tick(float(state.playback_step))
@@ -139,6 +150,7 @@ func tick(player_snapshot: Dictionary) -> Dictionary:
 	if state.mode == "charge" and int(state.phase) == 2:
 		# 原helper在更新路径读local root Z；这里复用唯一采样结果，不再次抽样。
 		state.remaining_distance -= local.z
+	state.special = sandbox_special.snapshot()
 	state.events = _events.duplicate(true)
 	return {"state":state.duplicate(true), "events":_events.duplicate(true),
 		"root_delta":local, "world_root_delta":world, "frames":state.frames.duplicate(), "animator_ticks":1}
@@ -161,6 +173,7 @@ func _yaw_towards(target: int, limit: int) -> void:
 	state.yaw = (int(state.yaw) + clampi(delta, -limit, limit)) & 65535
 
 func _idle(cooldown: int = COOLDOWN_TICKS, blend: int = 10) -> void:
+	sandbox_special.reset()
 	state.mode = "idle"
 	state.main = 0
 	state.sub = 1
@@ -186,9 +199,14 @@ func _decide(player: Dictionary) -> void:
 	if state.mode == "prepare":
 		state.prepare_ticks -= 1
 		if state.prepare_ticks <= 0:
-			_begin_attack(target)
+			if sandbox_specials_enabled and _sandbox_decision % 4 >= 2:
+				begin_special("laser" if _sandbox_decision % 4 == 2 else "stink", target)
+			else:
+				_begin_attack(target)
+			_sandbox_decision += 1
 		return
-	if offset.length() > DECISION_DISTANCE:
+	var decision_distance: float = 260.0 if sandbox_specials_enabled and _sandbox_decision % 4 == 3 else DECISION_DISTANCE
+	if offset.length() > decision_distance:
 		if state.mode != "approach":
 			state.mode = "approach"
 			state.main = 2
@@ -196,7 +214,7 @@ func _decide(player: Dictionary) -> void:
 			state.phase = 1
 			_animation(1024)
 		_yaw_towards(_target_yaw(target), 0x400)
-		state.approach_delta = _rotate(Vector3(0, 0, minf(APPROACH_SPEED, offset.length() - DECISION_DISTANCE)))
+		state.approach_delta = _rotate(Vector3(0, 0, minf(APPROACH_SPEED, offset.length() - decision_distance)))
 		state.position += state.approach_delta
 	else:
 		state.mode = "prepare"
@@ -205,6 +223,23 @@ func _decide(player: Dictionary) -> void:
 		state.phase = 0
 		state.prepare_ticks = PREPARE_TICKS
 		_animation(1001, 10)
+
+# 原创沙盒招式：只复用待机pose，不冒称原攻击动画或来源record。
+func begin_special(move: String, target: Vector3) -> bool:
+	if not state.get("ready",false) or not state.alive or state.mode in ["hit","down","dying","dead"] or not Special.MOVES.has(move):
+		return false
+	var facing: int = (_target_yaw(target)+(32768 if move == "stink" else 0)) & 65535
+	if not sandbox_special.begin(move,state.position,facing):
+		return false
+	state.mode = "special"
+	state.yaw = facing
+	state.attack_budget = 0
+	state.prepare_ticks = 0
+	_spawned = false
+	_animation(1001)
+	state.special = sandbox_special.snapshot()
+	_events.append({"event":"sandbox_special_begin","special":move,"attack_id":sandbox_special.attack_id,"policy":"original_sandbox_move"})
+	return true
 
 func _begin_attack(target: Vector3) -> void:
 	state.target_position = target
@@ -274,6 +309,7 @@ func _turn_attack_tick() -> void:
 			_idle()
 
 func _begin_reaction() -> void:
+	sandbox_special.reset()
 	var reaction: String = _pending_reaction
 	_pending_reaction = ""
 	state.attack_budget = 0
