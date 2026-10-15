@@ -1,0 +1,26 @@
+# 源码存档使用白名单；原游戏、派生资源、缓存和凭据不进入Git。
+*
+!/.gitignore
+!/godot-hunter-lab/
+!/godot-hunter-lab/project.godot
+!/godot-hunter-lab/main.tscn
+!/godot-hunter-lab/scripts/
+!/godot-hunter-lab/scripts/*.gd
+!/godot-hunter-lab/scripts/*.gd.uid
+!/godot-hunter-lab/tests/
+!/godot-hunter-lab/tests/*.gd
+!/godot-hunter-lab/tests/*.gd.uid
+!/tools/
+!/tools/export_hunter_godot.py
+!/tools/export_bulldrome_godot.py
+!/tools/bulldrome_assets_probe.py
+!/tools/bulldrome_identity_probe.py
+!/tools/hunter_action_assets_probe.py
+!/tools/hunter_animation_catalog.py
+!/tools/hunter_clip_probe.py
+!/tools/hunter_skin_probe.py
+!/tools/hunter_world_probe.py
+!/tools/hunter_mesh_probe.py
+!/tools/hunter_resource_probe.py
+!/tools/greatsword_combat_probe.py
+!/tools/animation_runtime_probe.py
