@@ -28,7 +28,7 @@ func _initialize() -> void:
 		_lifetime()
 		_workflows()
 	var result: Dictionary = {"engine":Engine.get_version_info().string, "passed":checks.size(), "failed":failures.size(), "checks":checks, "failures":failures, "simulation_calls":calls, "contacts":contacts_observed, "scope":"真实导出资产/真实controller与animator；几何golden为独立解析预期；未执行原游戏，非伤害/AI等价证明", "initialization":"hunter start>>1; shell24 start不除2; delay0不调整; short334余数绝对值,u8后s8负钳0", "ownership":"HP/资格窗口由caller拥有，history只随存活event保留；reset须与producer配对；shell24 selector0/2需caller显式shell24_active源资格，不猜mode", "visual_qa":"skipped: nonvisual owner task"}
-	var output = FileAccess.open("res://tests/attack_events_test_results.json", FileAccess.WRITE)
+	var output = FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/attack_events_test_results.json"), FileAccess.WRITE)
 	if output != null:
 		output.store_string(JSON.stringify(result, "\t"))
 	print("ATTACK EVENTS TESTS ", checks.size(), " passed / ", failures.size(), " failed; ", calls, " calls")

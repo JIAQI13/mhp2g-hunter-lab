@@ -6,12 +6,28 @@ const HunterCombat = preload("res://scripts/hunter_combat.gd")
 const MonsterController = preload("res://scripts/bulldrome_controller.gd")
 const MonsterView = preload("res://scripts/bulldrome_view.gd")
 const Session = preload("res://scripts/hunt_session.gd")
+const Tactics = preload("res://scripts/llm_tactics.gd")
+var llm = Tactics.new()
+var llm_mode := CheckButton.new()
+var llm_key := LineEdit.new()
+var llm_status := Label.new()
+var llm_banner := PanelContainer.new()
+var llm_banner_title := Label.new()
+var llm_banner_detail := Label.new()
 var special_effect := Node3D.new()
 var laser_warning: MeshInstance3D
 var laser_beam: MeshInstance3D
 var laser_core: MeshInstance3D
 var stink_ring: MeshInstance3D
 var stink_cloud: MeshInstance3D
+var tusk_warning: MeshInstance3D
+var tusk_charge: MeshInstance3D
+var tusk_pool: Array[MeshInstance3D] = []
+var tusk_trail: MeshInstance3D
+var slam_warning: MeshInstance3D
+var slam_impact: MeshInstance3D
+var slam_spin: MeshInstance3D
+var slam_shadow: MeshInstance3D
 var monster_animator = Animator.new()
 var monster = MonsterController.new()
 var boar_view = MonsterView.new()
@@ -119,16 +135,32 @@ func _ready() -> void:
 		box(self,Vector3(0.08,0.08,20),Vector3(side*Session.ARENA_HALF*0.01,0.04,0),Color("b8ba79"))
 	monster.sandbox_specials_enabled = true
 	build_special_effects()
+	add_child(llm)
 	build_ui()
 	reset_hunt()
+	configure_llm_from_local()
 	Input.joy_connection_changed.connect(_joy_changed)
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--test-frames="):
 			test_frames = int(arg.split("=")[1])
 	update_visuals()
 
+func configure_llm_from_local() -> void:
+	if llm.config_source == "local_file" and llm.has_key() and monster.sandbox_motion_enabled:
+		set_llm_mode(true)
+
+func set_llm_mode(value: bool) -> void:
+	llm.set_mode(value and monster.sandbox_motion_enabled)
+	llm_mode.set_pressed_no_signal(llm.enabled)
+	llm_mode.disabled = not monster.sandbox_motion_enabled
+	update_visuals()
+
+func text_input_focused() -> bool:
+	var focus := get_viewport().gui_get_focus_owner()
+	return focus is LineEdit or focus is TextEdit
+
 func configure_inputs() -> void:
-	var keys = {"left":KEY_A,"right":KEY_D,"forward":KEY_W,"back":KEY_S,"triangle":KEY_J,"circle":KEY_K,"cross":KEY_SPACE,"square":KEY_U,"shoulder":KEY_SHIFT,"kick":KEY_F,"weapon":KEY_Q,"menu":KEY_ESCAPE,"previous":KEY_BRACKETLEFT,"next":KEY_BRACKETRIGHT,"play":KEY_ENTER,"danger":KEY_T,"probe":KEY_H,"target_reset":KEY_R,"mode":KEY_M}
+	var keys = {"left":KEY_A,"right":KEY_D,"forward":KEY_W,"back":KEY_S,"triangle":KEY_J,"circle":KEY_K,"cross":KEY_SPACE,"square":KEY_U,"shoulder":KEY_SHIFT,"kick":KEY_F,"weapon":KEY_Q,"menu":KEY_ESCAPE,"previous":KEY_BRACKETLEFT,"next":KEY_BRACKETRIGHT,"play":KEY_ENTER,"danger":KEY_T,"probe":KEY_H,"target_reset":KEY_R,"mode":KEY_M,"llm":KEY_L}
 	var buttons = {"triangle":JOY_BUTTON_Y,"circle":JOY_BUTTON_B,"cross":JOY_BUTTON_A,"square":JOY_BUTTON_X,"shoulder":JOY_BUTTON_RIGHT_SHOULDER,"kick":JOY_BUTTON_BACK,"menu":JOY_BUTTON_START,"previous":JOY_BUTTON_DPAD_LEFT,"next":JOY_BUTTON_DPAD_RIGHT,"danger":JOY_BUTTON_LEFT_SHOULDER,"target_reset":JOY_BUTTON_DPAD_UP,"mode":JOY_BUTTON_DPAD_DOWN}
 	for action in keys:
 		var name: String = "lab_" + action
@@ -357,6 +389,25 @@ func build_hunter() -> void:
 		joint.height = 0.02
 		mesh_node(joint,sword,Color("ffcc66")).position = Vector3(0,0,z)
 
+func build_tusk_mesh() -> ArrayMesh:
+	var surface := SurfaceTool.new()
+	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var move: Dictionary = SandboxSpecial.MOVES.tusk
+	for ring in range(8):
+		for side in range(12):
+			for corner in [[ring,side],[ring+1,side+1],[ring+1,side],[ring,side],[ring,side+1],[ring+1,side+1]]:
+				var t: float = float(corner[0])/8.0
+				var angle: float = float(corner[1])*TAU/12.0
+				var radius: float = move.radius*(1.0-t)
+				surface.add_vertex(Vector3(sin(angle)*radius+0.06*t*t,cos(angle)*radius+0.16*t*t,(t*2.0-1.0)*move.half_length))
+	for side in range(12):
+		surface.add_vertex(Vector3(0,0,-move.half_length))
+		for corner in [side+1,side]:
+			var angle: float = corner*TAU/12.0
+			surface.add_vertex(Vector3(sin(angle)*move.radius,cos(angle)*move.radius,-move.half_length))
+	surface.generate_normals()
+	return surface.commit()
+
 func build_special_effects() -> void:
 	add_child(special_effect)
 	laser_warning = box(special_effect,Vector3(0.7,0.035,10),Vector3.ZERO,Color("efae35"))
@@ -382,27 +433,88 @@ func build_special_effects() -> void:
 	cloud.radius = 2.2
 	cloud.height = 4.4
 	stink_cloud = mesh_node(cloud,special_effect,Color(0.54,0.68,0.15,0.25))
-	for node in [laser_warning,laser_beam,laser_core,stink_ring,stink_cloud]:
+	var tooth := build_tusk_mesh()
+	tusk_warning = box(special_effect,Vector3(SandboxSpecial.MOVES.tusk.radius*2,0.025,SandboxSpecial.MOVES.tusk.range),Vector3.ZERO,Color(1,0.70,0.28,0.45))
+	tusk_charge = mesh_node(tooth,special_effect,Color("ffc86a"))
+	for i in range(SandboxSpecial.MOVES.tusk.count):
+		tusk_pool.append(mesh_node(tooth,special_effect,Color("fff3d6")))
+	tusk_trail = box(special_effect,Vector3(0.04,0.04,1),Vector3.ZERO,Color(1,0.75,0.38,0.45))
+	var slam_ring := TorusMesh.new()
+	slam_ring.inner_radius = SandboxSpecial.SLAM.radius-0.06
+	slam_ring.outer_radius = SandboxSpecial.SLAM.radius+0.06
+	slam_warning = mesh_node(slam_ring,special_effect,Color("ff7256"))
+	slam_impact = mesh_node(slam_ring,special_effect,Color("ffd275"))
+	var spin_ring := TorusMesh.new()
+	spin_ring.inner_radius = 1.5
+	spin_ring.outer_radius = 1.56
+	slam_spin = mesh_node(spin_ring,special_effect,Color(0.42,0.86,1,0.55))
+	var shadow := CylinderMesh.new()
+	shadow.top_radius = 0.9
+	shadow.bottom_radius = 0.9
+	shadow.height = 0.008
+	slam_shadow = mesh_node(shadow,special_effect,Color(0.02,0.05,0.07,0.55))
+	for node in [laser_warning,laser_beam,laser_core,stink_ring,stink_cloud,tusk_warning,tusk_charge,tusk_trail,slam_warning,slam_impact,slam_spin,slam_shadow]+tusk_pool:
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		var mat: StandardMaterial3D = node.material_override
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		mat.emission_enabled = true
 		mat.emission = mat.albedo_color
+	for node in tusk_pool:
+		var mat: StandardMaterial3D = node.material_override
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+		mat.emission_energy_multiplier = 0.12
+		mat.roughness = 0.65
 
 func update_special_effects() -> void:
 	var special: Dictionary = monster.sandbox_special.snapshot()
 	special_effect.visible = hunt_mode and special.kind != ""
+	for node in [tusk_warning,tusk_charge,tusk_trail,slam_warning,slam_impact,slam_spin,slam_shadow]:
+		node.visible = false
+	for node in tusk_pool:
+		node.visible = false
 	if not special_effect.visible:
 		return
+	if special.kind == "slam":
+		slam_shadow.visible = true
+		slam_shadow.position = Vector3(special.origin.x,0.035,special.origin.z)
+		slam_spin.visible = special.stage in ["windup","ascent","hover","locked","descent"]
+		slam_spin.position = special.origin+Vector3(0,0.5,0)
+		slam_spin.rotation.y = special.yaw*TAU/65536.0
+		slam_spin.scale = Vector3.ONE*(0.95+0.05*sin(special.age*0.7))
+		slam_warning.visible = special.stage in ["locked","descent"]
+		slam_warning.position = special.landing_point+Vector3(0,0.08,0)
+		slam_impact.visible = special.stage == "active"
+		slam_impact.position = special.landing_point+Vector3(0,0.12,0)
+	var tusk: bool = special.kind == "tusk"
+	if tusk:
+		var facing: float = special.yaw*TAU/65536.0
+		var forward := Vector3(0,0,1).rotated(Vector3.UP,facing)
+		tusk_warning.visible = special.stage == "windup"
+		tusk_charge.visible = special.stage == "windup"
+		tusk_warning.position = special.mouth+forward*SandboxSpecial.MOVES.tusk.range*0.5
+		tusk_warning.position.y = 0.055
+		tusk_warning.rotation.y = facing
+		tusk_charge.position = special.mouth
+		tusk_charge.rotation.y = facing
+		tusk_charge.scale = Vector3.ONE*(0.8+0.2*sin(special.age*0.6))
+		var projectile: Dictionary = special.projectile
+		if projectile.get("active",false):
+			tusk_pool[0].visible = true
+			tusk_pool[0].position = projectile.position
+			tusk_pool[0].rotation.y = facing
+			tusk_trail.visible = projectile.position != projectile.previous
+			tusk_trail.position = (projectile.position+projectile.previous)*0.5-forward*SandboxSpecial.MOVES.tusk.half_length
+			tusk_trail.rotation.y = facing
+			tusk_trail.scale.z = projectile.position.distance_to(projectile.previous)
 	var shape: Dictionary = special.volume
 	var laser: bool = special.kind == "laser"
 	var active: bool = special.stage == "active"
 	laser_warning.visible = laser and special.stage != "recovery"
 	laser_beam.visible = laser and active
 	laser_core.visible = laser and active
-	stink_ring.visible = not laser and special.stage != "recovery"
-	stink_cloud.visible = not laser and active
+	stink_ring.visible = special.kind == "stink" and special.stage != "recovery"
+	stink_cloud.visible = special.kind == "stink" and active
 	if laser:
 		var center: Vector3 = (shape.a+shape.b)*0.5
 		laser_warning.position = Vector3(center.x,0.05,center.z)
@@ -412,7 +524,7 @@ func update_special_effects() -> void:
 		var beam_transform := Transform3D(Basis(right,direction,right.cross(direction)),center)
 		laser_beam.transform = beam_transform
 		laser_core.transform = beam_transform
-	else:
+	elif special.kind == "stink":
 		stink_ring.position = Vector3(shape.a.x,0.08,shape.a.z)
 		stink_cloud.position = shape.a
 
@@ -424,13 +536,41 @@ func build_ui() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(root)
 	hud.position = Vector2(20,18)
-	hud.add_theme_font_size_override("font_size",17)
+	hud.add_theme_font_size_override("font_size",14)
+	hud.size.x = 430
+	hud.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(hud)
+	llm_banner.anchor_left = 0.5
+	llm_banner.anchor_right = 0.5
+	llm_banner.offset_left = -180
+	llm_banner.offset_right = 180
+	llm_banner.offset_top = 18
+	llm_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var banner_style := StyleBoxFlat.new()
+	banner_style.bg_color = Color("17283e")
+	banner_style.border_color = Color("ffce65")
+	banner_style.set_border_width_all(2)
+	banner_style.set_content_margin_all(10)
+	llm_banner.add_theme_stylebox_override("panel",banner_style)
+	root.add_child(llm_banner)
+	var banner_column := VBoxContainer.new()
+	banner_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	llm_banner.add_child(banner_column)
+	llm_banner_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	llm_banner_title.add_theme_font_size_override("font_size",24)
+	llm_banner_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	banner_column.add_child(llm_banner_title)
+	llm_banner_detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	llm_banner_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	llm_banner_detail.custom_minimum_size.x = 336
+	llm_banner_detail.add_theme_font_size_override("font_size",14)
+	llm_banner_detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	banner_column.add_child(llm_banner_detail)
 	help.text = "WASD / 左摇杆 移动    J/Y △ 拔刀/蓄力    K/B ○ 横斩    J+K 上捞\nSpace/A × 闪避/蹲    U/X □ 收刀    Shift/R1 冲刺；拔刀 R1+Y 防御\n松 J/Y 蓄力出刀；背离活猪王收刀冲刺后 A 飞扑    Q 拔刀\nM / 十字下 切换训练    R / 十字上 重开狩猎（训练仅重置方块）\nEsc/Start 动作库    [ ] / 十字左右 选择    Enter 播放并切回训练\n训练：T/L1 黄色危险夹具（非怪物） · H 独立无伤探针\n右摇杆 / 右鼠标 环绕 · 滚轮 缩放；未做实体手柄实测\n猪王原模型/动作/攻击形状；选招、HP100/1000、来袭20为沙盒\n受击HurtBox/身体推挡为近似；非原完整物理/防御/伤害系统"
-	help.text += "\n激光波/臭屁：金狮子/桃毛兽风格启发；原创沙盒，非原作复原"
+	help.text += "\n六招：冲撞/转向攻击/激光/臭屁/猪牙/螺旋砸地（特殊为原创）\n螺旋砸地：蓄力升空5m，红圈锁点0.8秒后垂直砸落；走开可躲，落地恢复2秒可惩罚"
 	help.position = Vector2(20,550)
-	help.add_theme_font_size_override("font_size",14)
+	help.add_theme_font_size_override("font_size",12)
 	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(help)
 	panel.position = Vector2(924,18)
@@ -441,6 +581,33 @@ func build_ui() -> void:
 	hunter_hp.max_value = 100
 	hunter_hp.show_percentage = false
 	root.add_child(hunter_hp)
+	var tactics_ui := VBoxContainer.new()
+	tactics_ui.position = Vector2(20,298)
+	tactics_ui.custom_minimum_size = Vector2(520,0)
+	root.add_child(tactics_ui)
+	llm_mode.text = "LLM战术沙盒 · L 开/关（仅指定relay外传游戏摘要）"
+	llm_mode.tooltip_text = "L 切换；输入框打字不切换。启用不等于模型已采纳；本地key加载沿用自动开启。"
+	tactics_ui.add_child(llm_mode)
+	llm_mode.toggled.connect(set_llm_mode)
+	llm_key.secret = true
+	llm_key.max_length = 512
+	llm_key.placeholder_text = "可选key：仅内存，Enter应用并清空；空值移除"
+	tactics_ui.add_child(llm_key)
+	llm_key.text_submitted.connect(func(value): llm.set_memory_key(value); llm_key.clear(); llm_key.release_focus())
+	llm_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	llm_status.custom_minimum_size = Vector2(500,0)
+	llm_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	llm_status.add_theme_font_size_override("font_size",12)
+	var status_scroll := ScrollContainer.new()
+	status_scroll.custom_minimum_size = Vector2(520,160)
+	status_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	tactics_ui.add_child(status_scroll)
+	status_scroll.add_child(llm_status)
+	var logs_button := Button.new()
+	logs_button.text = "打开实际LLM日志目录（本地JSONL）"
+	logs_button.tooltip_text = "实际目录："+ProjectSettings.globalize_path(llm.LOG_DIR)+"\n本运行文件："+ProjectSettings.globalize_path(llm.log_path)
+	logs_button.pressed.connect(llm.open_logs)
+	tactics_ui.add_child(logs_button)
 	round_panel.position = Vector2(270,320)
 	round_panel.size = Vector2(570,130)
 	root.add_child(round_panel)
@@ -451,7 +618,18 @@ func build_ui() -> void:
 	var column := VBoxContainer.new()
 	panel.add_child(column)
 	column.add_child(mode_button)
+	mode_button.tooltip_text = "切换狩猎/训练会明确重置整局和双方位置（允许重新定位）；非重置的空中取消会先连续无伤降落。"
 	mode_button.pressed.connect(func(): set_hunt_mode(not hunt_mode))
+	var motion_mode := CheckButton.new()
+	motion_mode.text = "连续快转沙盒（关闭：来源动作轨迹）"
+	motion_mode.button_pressed = true
+	motion_mode.tooltip_text = "沙盒：15tick转向攻击仍有record2伤害；连续步行/特殊18tick转身。来源轨迹：原分段yaw/END，非原完整AI，禁用LLM与原创特殊。此UI切换明确重开整局/双方复位；运行中直接关闭AI/模式而不reset时，空中猪王先连续无伤降落。"
+	column.add_child(motion_mode)
+	motion_mode.toggled.connect(func(value):
+		monster.sandbox_motion_enabled = value
+		monster.sandbox_specials_enabled = value
+		set_llm_mode(false)
+		reset_hunt())
 	var title := Label.new()
 	title.text = "动作库 · 选定初始姿态展示"
 	column.add_child(title)
@@ -554,7 +732,9 @@ func tick_combat(snapshot: Dictionary) -> void:
 func tick_hunt(input: Dictionary) -> Dictionary:
 	tick_feedback()
 	sync_configuration()
+	llm.advance(hunt,hunt_mode)
 	hunt_snapshot = hunt.tick(input)
+	llm.record(hunt)
 	if hunt_snapshot.has("error") or not hunt_snapshot.get("ready",false):
 		push_error("狩猎模拟失败："+str(hunt_snapshot))
 		get_tree().quit(1)
@@ -569,7 +749,7 @@ func tick_hunt(input: Dictionary) -> Dictionary:
 			var guarded: bool = event.guarded
 			show_damage(("防御 -" if guarded else "-")+str(event.applied_damage),controller.state.position*0.01+Vector3(0,2.2,0),Color("7be6ff") if guarded else Color("ff7666"))
 	boar_view.set_hit_flash(monster_flash > 0)
-	boar_view.update_pose(monster_animator)
+	boar_view.sync(monster.state,monster_animator)
 	skin_updates += 1
 	return hunt_snapshot
 
@@ -594,11 +774,12 @@ func reset_hunt() -> void:
 	input_blocked_until_release = true
 	monster.ai_enabled = true
 	hunt.reset()
+	llm.bind_round(hunt)
 	animator.tick(0)
 	monster_animator.tick(0)
 	combat.reset()
 	hunt_snapshot.clear()
-	boar_view.update_pose(monster_animator)
+	boar_view.sync(monster.state,monster_animator)
 	skin_updates += 1
 	update_visuals()
 
@@ -659,6 +840,8 @@ func preview_action(category: int, sub: int) -> bool:
 	return controller.force_action(category,sub)
 
 func input_snapshot() -> Dictionary:
+	if text_input_focused():
+		return {"held":0,"mag":0,"direction":int(controller.state.yaw),"bits":0}
 	var held: int = 0
 	for action in BUTTONS:
 		if Input.is_action_pressed("lab_"+action):
@@ -680,10 +863,15 @@ func input_snapshot() -> Dictionary:
 	return {"held":held,"mag":int(round(127*motion.length())),"direction":direction,"bits":bits}
 
 func _input(event: InputEvent) -> void:
-	if not is_node_ready() or controller.state.is_empty():
+	if not is_node_ready() or controller.state.is_empty() or text_input_focused():
 		return
 	if event is InputEventKey or event is InputEventJoypadButton or event is InputEventJoypadMotion:
 		if event is InputEventKey and event.echo:
+			return
+		if event.is_action("lab_llm"):
+			if event.is_action_pressed("lab_llm"):
+				set_llm_mode(not llm.enabled)
+			get_viewport().set_input_as_handled()
 			return
 		if event.is_action("lab_target_reset"):
 			if event.is_action_pressed("lab_target_reset"):
@@ -802,6 +990,19 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 
 func update_visuals() -> void:
+	llm_mode.set_pressed_no_signal(llm.enabled)
+	llm_mode.disabled = not monster.sandbox_motion_enabled
+	llm_banner_title.text = "LLM 模式已开启 · L 关闭" if llm.enabled else "规则 AI · L 开启 LLM"
+	llm_banner_title.modulate = Color("ffce65") if llm.enabled else Color("b6c9dc")
+	llm_banner_detail.text = llm.mode_brief(hunt,hunt_mode)
+	if not monster.sandbox_motion_enabled:
+		llm_banner_detail.text = "来源动作模式 · LLM禁用"
+	if llm.log_status.contains("失败") or llm.log_status.contains("上限") or llm.log_status.contains("不完整"):
+		llm_banner_detail.text += "\n"+llm.log_status
+	var configuration: String = llm.config_status
+	if llm.config_source == "local_file":
+		configuration += " / "+("LLM自动开启，仅指定relay外传游戏摘要" if llm.enabled else "LLM已关闭 · 不联网")
+	llm_status.text = configuration+"\n"+llm.status+"\n选择："+llm.choice+"\n选择意图 ["+monster.decision_source+"]："+monster.llm_selection+" · "+str(monster.state.mode)+"\n追踪："+str(monster.state.tracking_stage)+"\n当前观测："+str(monster.state.observed_target)+" / 承诺 ["+str(monster.state.committed_source)+"]："+str(monster.state.committed_target)+"\n理由："+llm.reason+"\n累计请求%d · 实报usage %s · %d请求usage unknown\n无本地累计token/请求上限；服务额度未验证\n单次输出容量1024 token · 单在途 / 最小间隔5秒\n最近请求耗时%dms（完整响应/终止；非TTFT）\n采纳→实际执行延迟：unknown（未测step）\n" % [llm.requests,str(llm.usage) if llm.usage_known else "unknown",llm.unknown_usage_requests,llm.latency_ms]+llm.log_status
 	update_target_visuals()
 	update_special_effects()
 	boar_view.visible = hunt_mode
@@ -812,16 +1013,15 @@ func update_visuals() -> void:
 	mode_button.text = "狩猎中 · M / 十字下 切换训练" if hunt_mode else "训练中 · M / 十字下 开始狩猎"
 	reset_button.text = "重开整局 · 双方复位" if hunt_mode else "复位 · 收刀站姿"
 	target_reset_button.text = "重开狩猎 · R / 十字上" if hunt_mode else "重置训练方块 · R / 十字上"
-	combat_note.text = "中性：基础 raw100 · 肉质100%\n横斩36 / 上捞46 / 纵斩48\n蓄力1/2/3：71 / 96 / 143 · 踢2\n原招/激光20，臭屁12；防御分档\n猪王HP0保留尸体；R重开整局\n原模型/动作/形状；选招与受击近似" if hunt_mode else "中性：基础 raw100 · 肉质100%\n斩味1 / 阶段1 / 目标1 · 无属性会心\n横斩36 / 上捞46 / 纵斩48\n蓄力1/2/3：71 / 96 / 143 · 踢2\n击破90模拟调用重生（非原值）\n原记录几何命中；非完整原游戏系统"
+	combat_note.text = "中性：基础 raw100 · 肉质100%\n横斩36 / 上捞46 / 纵斩48\n蓄力1/2/3：71 / 96 / 143 · 踢2\n原招/激光20，臭屁12/牙15/砸25\n猪王HP0保留尸体；R重开整局\n原模型/动作/形状；选招与受击近似" if hunt_mode else "中性：基础 raw100 · 肉质100%\n斩味1 / 阶段1 / 目标1 · 无属性会心\n横斩36 / 上捞46 / 纵斩48\n蓄力1/2/3：71 / 96 / 143 · 踢2\n击破90模拟调用重生（非原值）\n原记录几何命中；非完整原游戏系统"
 	danger_toggle.disabled = hunt_mode
 	probe_toggle.disabled = hunt_mode
 	round_panel.visible = hunt_mode and hunt.round_state != "running"
 	round_label.text = ("狩猎成功" if hunt.round_state == "victory" else "猎人倒下")+"\n猎人 %d / 100 · 猪王 %d / 1000\nR / 十字上 / 重开按钮 再来一局" % [controller.state.hp,monster.state.hp]
-	boar_view.position = monster.state.position*0.01
-	boar_view.rotation.y = int(monster.state.yaw)*TAU/65536.0
+	boar_view.sync_transform(monster.state)
 	var special: Dictionary = monster.sandbox_special.snapshot()
-	var move_text: String = ("激光波" if special.kind == "laser" else "臭屁")+" · "+{"windup":"范围预警","active":"释放","recovery":"恢复"}.get(special.stage,"") if special.kind != "" else str(monster.state.mode)
-	monster_label.text = "大野猪王 %d / 1000 HP\n%s" % [monster.state.hp,move_text]
+	var move_text: String = {"laser":"激光波","stink":"臭屁","tusk":"猪牙弹 · 原创沙盒","slam":"螺旋砸地 · 原创沙盒"}.get(special.kind,special.kind)+" · "+{"windup":"起飞蓄力" if special.kind == "slam" else "范围预警","ascent":"旋转升空","hover":"高空有限移动","locked":"红圈已锁定 · 走开！","descent":"砸落","landing":"取消 · 安全降落","active":"落地冲击" if special.kind == "slam" else "释放","recovery":"恢复 · 可惩罚"}.get(special.stage,"") if special.kind != "" else str(monster.state.mode)
+	monster_label.text = "大野猪王 %d / 1000 HP\n%s · %s" % [monster.state.hp,"连续沙盒" if monster.sandbox_motion_enabled else "来源动作轨迹",move_text]
 	actor.position = controller.state.position*0.01
 	actor.rotation.y = int(controller.state.yaw)*TAU/65536.0
 	for i in range(joints.size()):

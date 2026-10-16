@@ -106,6 +106,9 @@ func reset() -> void:
 	_attacks.clear()
 	_last_attack_id = 0 # caller同时重置producer；单独动画重置不可调用本方法。
 
+func terminate(attack_id: int) -> void:
+	_attacks = _attacks.filter(func(attack): return int(attack.attack_id) != attack_id)
+
 func read_record(record_id: int) -> Dictionary:
 	return _records.get(record_id, {}).duplicate(true)
 
@@ -134,6 +137,10 @@ func tick(actor_snapshot: Dictionary, animator: HunterAnimator, lift: float, tar
 		return contacts
 	if _records.is_empty() or animator == null or not is_finite(lift) or not _integer(actor_snapshot.get("primary")) or not _integer(actor_snapshot.get("yaw")) or not _vector(actor_snapshot.get("position")):
 		return contacts
+	# 生产者退出通知先于寿命/碰撞消费，不能靠目标资格隐藏仍然存活的旧攻击。
+	for notification in actor_snapshot.get("events", []):
+		if notification is Dictionary and notification.get("event") == "attack_end" and _integer(notification.get("attack_id")):
+			terminate(int(notification.attack_id))
 	var candidates: Array[Dictionary] = []
 	for target in targets:
 		# 先检查controller资格，拒绝时不碰几何，更不提交history。

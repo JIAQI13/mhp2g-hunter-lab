@@ -134,7 +134,7 @@ func _initialize() -> void:
 		"limits":session.limits,
 		"interpretation":"Failure establishes only this bounded test player's observed outcome, not that the game cannot be won. No-contact attacks and active evade windows are observations, not proof of a successful dodge."
 	}
-	var file: FileAccess = FileAccess.open("res://tests/hunt_full_round_results.json", FileAccess.WRITE)
+	var file: FileAccess = FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/hunt_full_round_results.json"), FileAccess.WRITE)
 	if file == null:
 		_require(false, "result file writable")
 	else:

@@ -153,7 +153,7 @@ func _run() -> void:
 		view.update_pose(animator)
 		await _capture_preview()
 	var report: Dictionary = {"schema_version": 1, "checks": checks, "failures": failures, "clips": distinct.size(), "mesh_poses": golden.samples.size(), "vertex_samples": vertex_samples, "curve_samples": curve_samples, "max_vertex_error_display_units": max_vertex_error, "max_pose_error_source_units": max_pose_error, "max_curve_error": max_curve_error, "elapsed_seconds": float(Time.get_ticks_usec() - started) / 1000000.0, "engine": Engine.get_version_info(), "preview_path": "res://tests/bulldrome_preview.png" if "--capture" in OS.get_cmdline_user_args() else "", "limits": ["Original CPU geometry/PNG import verified; optional native idle preview only, no GE/VFPU/PSP runtime equivalence.", "CPU time/process-family peak memory and token baseline not measured in this harness."]}
-	var output := FileAccess.open("res://tests/bulldrome_test_results.json", FileAccess.WRITE)
+	var output := FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/bulldrome_test_results.json"), FileAccess.WRITE)
 	output.store_string(JSON.stringify(report, "\t") + "\n")
 	print("BULLDROME TESTS " + JSON.stringify(report))
 	view.free()

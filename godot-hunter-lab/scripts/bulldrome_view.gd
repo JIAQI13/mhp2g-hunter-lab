@@ -102,6 +102,14 @@ func set_hit_flash(active: bool) -> void:
 		material.emission = Color("ff7850")
 		material.emission_energy_multiplier = 0.7
 
+func sync_transform(state: Dictionary) -> void:
+	position = state.position*0.01
+	rotation.y = int(state.yaw)*TAU/65536.0
+
+func sync(state: Dictionary, animator: HunterAnimator) -> void:
+	sync_transform(state)
+	update_pose(animator)
+
 func update_pose(animator: HunterAnimator) -> void:
 	if _data.is_empty() or not is_same(animator.data, _data) or animator.world_pose.size() != _data.bones.size():
 		return

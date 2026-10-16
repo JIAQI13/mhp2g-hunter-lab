@@ -34,7 +34,15 @@ func fixture(move: String, guard: bool = false) -> void:
 	if guard:
 		lab.controller.state.flags410 |= 8
 		lab.controller.force_action(2,3)
-	check(lab.monster.begin_special(move,lab.controller.state.position),"special entry "+move)
+	check(lab.monster.begin_special(move,lab.controller.state.position),"special preparation entry "+move)
+	var prep: int = 0
+	for i in range(180):
+		if lab.monster.state.mode == "prepare":
+			prep += 1
+		step(HunterController.R if guard else 0)
+		if lab.monster.sandbox_special.kind != "":
+			break
+	check(prep >= BulldromeController.PREPARE_TICKS and lab.monster.sandbox_special.kind == move and lab.monster.sandbox_special.age == 0,"actual special begins after ready and full preparation")
 
 func capture(name: String) -> void:
 	if not capture_mode:
@@ -146,6 +154,7 @@ func integration_checks() -> void:
 		check(lab.hunt.monster_hits == 0 and lab.controller.state.hp == 100 and lab.monster.sandbox_special.volume() == fixed_shape,"leave warning area: miss, no homing "+move)
 	lab.reset_hunt()
 	lab.monster.ai_enabled = true
+	lab.monster.tactics.rng.seed = 7
 	var seen: Array = []
 	for i in range(2000):
 		var result := step()
@@ -154,16 +163,29 @@ func integration_checks() -> void:
 				seen.append(event.special)
 		if lab.hunt.round_state != "running":
 			break
-	check(seen.has("laser") and seen.has("stink"),"unmodified default spawn and stationary input naturally reaches both moves")
+	check(not seen.is_empty() and seen.all(func(move): return Special.MOVES.has(move)),"seeded stationary round reaches legal specials, no forced sequence")
 	print("NATURAL SPECIAL ROUND ticks=",lab.hunt.ticks," hp=",lab.controller.state.hp," moves=",seen," outcome=",lab.hunt.round_state)
-	for decision in [2,3]:
+	for move in ["laser","stink"]:
 		lab.reset_hunt()
 		lab.monster.ai_enabled = true
-		lab.monster._sandbox_decision = decision
-		lab.monster.state.mode = "prepare"
-		lab.monster.state.prepare_ticks = 1
+		var distance: float = 500.0 if move == "laser" else 190.0
+		lab.controller.state.position = Vector3(0,0,distance)
+		lab.monster.state.position = Vector3.ZERO
+		var found: bool = false
+		for seed in range(32):
+			lab.monster.tactics.rng.seed = seed
+			if lab.monster.tactics.choose(distance,0,"locomotion_or_idle",true,lab.monster.LLM_RANGES).move == move:
+				lab.monster.tactics.rng.seed = seed
+				found = true
+				break
+		check(found,"finite seeds cover situational fallback "+move)
 		step()
-		check(lab.monster.sandbox_special.kind == ("laser" if decision == 2 else "stink"),"sandbox decision reaches move")
+		check(lab.monster.state.mode == "reacquire" and lab.monster.sandbox_special.kind == "","rule selection repositions before preparing fixed geometry")
+		for i in range(180):
+			step()
+			if lab.monster.sandbox_special.kind != "":
+				break
+		check(lab.monster.sandbox_special.kind == move,"sandbox decision reaches move")
 
 func run() -> void:
 	lab = load("res://main.tscn").instantiate()

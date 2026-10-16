@@ -98,6 +98,17 @@ func is_drawn() -> bool:
 func attack_collision_allowed() -> bool:
 	return state.internal_window == 0
 
+func observable_action() -> String:
+	if is_recovering():
+		return "hurt_or_recovering"
+	if int(state.cate) == 2:
+		return "guard"
+	if int(state.cate) == 1:
+		return "charging_weapon" if CHARGE.has(int(state.sub)) else "weapon_action"
+	if ROLL.has(int(state.sub)) or SIDE.has(int(state.sub)) or int(state.sub) in [32,68,69]:
+		return "evading"
+	return "locomotion_or_idle"
+
 func is_dead() -> bool:
 	return state.get("recovery", "none") == "dead"
 

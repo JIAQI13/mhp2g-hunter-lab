@@ -15,11 +15,12 @@ const LIMITS = [
 	"猎人hurtbox是当前bone10/bone20粗球，radius0.4/0.25显示单位；骨矩阵后只转换一次.01与lift，不用render transform。",
 	"推挡独立采用猎人40/猪王85源单位XZ圆，arena中心边界±(1000-radius)；不是原hurt/attack形状。",
 	"相对直线swept-circle TOI、等分法向冲量/切向滑动及迭代墙边推挡是平地空间适配，不是原物理。",
-	"身体高度资格按猎人高于floor85源单位跳过地面推挡（明确平地clearance沙盒）；不把air280或地面flags当永久空中。",
+	"身体资格由空间owner按实际Y计算：猎人距floor<=85、猪王在Y=0且垂直根分离<=85才应用地面2D推挡；飞行仍夹arena但不隔空推人，不禁3D武器击中空中hurtbox。平地clearance沙盒，不把air280/flags当永久空中。",
+	"原创helicopter_slam由SandboxSpecial拥有位置/yaw/时钟，实体和hurtbox同取，无额外root；固定地面半径2m ring对应竖胶囊aY0.4/bY1.2/radius2，6tick落地窗口一次damage25/impact25，复用incoming和回避/防御chip6；落地点在冲击/恢复保持锚定，地面身体修正只推猎人。仅平地arena，不声明悬崖或复杂地形。",
 	"只支持选定地面kind0 incoming；非零原碰撞窗口先拒绝，窗口为零的未知空中路径报告not_ready，不造新无敌计时。",
 	"按tick先提交上次incoming，再两actor唯一次采样，空间修正后hunter伤害先提交；死猪本tick不再伤人。已queued incoming下tick提交，败优先、终局锁定。",
 	"原攻击record寿命/timegate由两个AttackEvents拥有；当前pose接触，未实现武器/攻击胶囊连续扫掠。",
-	"新增激光波/臭屁为原创沙盒：SandboxSpecial独占时钟、固定几何、目标去重；session复用incoming，不直接扣HP。激光20/impact20、臭屁12/impact5；不声称原作规则。",
+	"激光波/臭屁/猪牙为原创沙盒：SandboxSpecial独占时钟、几何及目标去重；猪牙单弹固定起手方向，连续swept capsule、速度45源单位/tick、射程800、TTL20、半长45/半径22；session复用incoming，不直接扣HP。激光20/impact20、臭屁12/impact5、猪牙15/impact15；source动作模式无原创猪牙，不声称原作规则。",
 ]
 
 var player: HunterController
@@ -110,11 +111,16 @@ func tick(input_snapshot: Dictionary) -> Dictionary:
 	_queued_source.clear()
 	var target: Dictionary = p.duplicate(true)
 	target.alive = active and int(p.hp) > 0
+	target.observable_action = player.observable_action()
 	var notification: Dictionary = monster.tick(target)
 	var m: Dictionary = notification.state
 	m.events = notification.events
 	_append_actor_events(notification.events, "bulldrome")
 	var space: Dictionary = _resolve_space(old_player, old_monster)
+	if monster.state.mode == "special_commit":
+		monster.commit_special()
+		_append_actor_events(monster.state.events.filter(func(e): return e.event == "sandbox_special_begin"), "bulldrome")
+		m = monster.state.duplicate(true)
 	p.position = player.state.position
 	m.position = monster.state.position
 	p.alive = active and int(p.hp) > 0
@@ -144,6 +150,7 @@ func tick(input_snapshot: Dictionary) -> Dictionary:
 	if m.alive:
 		for contact in monster.sandbox_special.contacts(player_targets):
 			_queue_contact(contact,int(contact.damage),int(contact.impact))
+	monster.state.special = monster.sandbox_special.snapshot()
 	ticks += 1
 	if round_state == "running":
 		if int(player.state.hp) <= 0:
@@ -198,7 +205,11 @@ func _resolve_space(previous_player: Vector3, previous_monster: Vector3) -> Dict
 	var p: Vector2 = _bounded(_xz(player.state.position), HUNTER_RADIUS)
 	var m: Vector2 = _bounded(_xz(monster.state.position), MONSTER_RADIUS)
 	var wall: bool = not m.is_equal_approx(_xz(monster.state.position))
-	var grounded: bool = float(player.state.position.y) - float(player.state.floor_height) <= MONSTER_RADIUS
+	var hunter_grounded: bool = float(player.state.position.y) - float(player.state.floor_height) <= MONSTER_RADIUS
+	var monster_grounded: bool = absf(float(monster.state.position.y)) <= 0.001
+	var vertical_overlap: bool = absf(float(player.state.position.y)-float(monster.state.position.y)) <= MONSTER_RADIUS
+	var grounded: bool = hunter_grounded and monster_grounded and vertical_overlap
+	var landing: bool = monster.sandbox_special.kind == "slam" and monster.sandbox_special.stage in ["active","recovery"]
 	var swept: bool = false
 	var blocked: bool = false
 	var toi: float = 1.0
@@ -213,7 +224,7 @@ func _resolve_space(previous_player: Vector3, previous_monster: Vector3) -> Dict
 		var b: float = 2.0 * offset.dot(relative)
 		var c: float = offset.length_squared() - BODY_DISTANCE * BODY_DISTANCE
 		var discriminant: float = b * b - 4.0 * a * c
-		if a > 0.000001 and c >= -0.001 and b < 0.0 and discriminant >= 0.0:
+		if not landing and a > 0.000001 and c >= -0.001 and b < 0.0 and discriminant >= 0.0:
 			toi = (-b - sqrt(discriminant)) / (2.0 * a)
 			if toi >= 0.0 and toi < 1.0:
 				var normal: Vector2 = (offset + relative * toi).normalized()
@@ -233,14 +244,38 @@ func _resolve_space(previous_player: Vector3, previous_monster: Vector3) -> Dict
 			if distance >= BODY_DISTANCE - 0.00001:
 				break
 			var normal: Vector2 = delta / distance if distance > 0.00001 else Vector2.RIGHT
-			var correction: Vector2 = normal * (BODY_DISTANCE - distance + 0.00001) * 0.5
+			var correction: Vector2 = normal * (BODY_DISTANCE - distance + 0.00001) * (1.0 if landing else 0.5)
 			p += correction
-			m -= correction
+			if not landing:
+				m -= correction
 			blocked = true
+			if landing:
+				break
+		if landing and _bounded(p,HUNTER_RADIUS).distance_to(m) < BODY_DISTANCE-0.001:
+			var radius: float = BODY_DISTANCE+0.01
+			var bound: float = ARENA_HALF-HUNTER_RADIUS
+			var nearest: Vector2 = m-m.normalized()*radius
+			var best: float = nearest.distance_squared_to(p)
+			# Closest feasible circle/wall intersections, without moving the committed boar.
+			for axis in [0,1]:
+				for side in [-1,1]:
+					var wall_offset: float = side*bound-m[axis]
+					if absf(wall_offset) > radius:
+						continue
+					var extent: float = sqrt(radius*radius-wall_offset*wall_offset)
+					for tangent in [-1,1]:
+						var candidate: Vector2 = m
+						candidate[axis] = side*bound
+						candidate[1-axis] += tangent*extent
+						if candidate.is_equal_approx(_bounded(candidate,HUNTER_RADIUS)) and candidate.distance_squared_to(p) < best:
+							nearest = candidate
+							best = candidate.distance_squared_to(p)
+			p = nearest
 	p = _bounded(p, HUNTER_RADIUS)
 	m = _bounded(m, MONSTER_RADIUS)
 	player.state.position = Vector3(p.x, player.state.position.y, p.y)
 	monster.state.position = Vector3(m.x, monster.state.position.y, m.y)
-	if wall or blocked:
-		monster.stop_charge()
-	return {"grounded_body":grounded, "swept":swept, "toi":toi, "blocked":blocked, "monster_wall":wall, "distance":p.distance_to(m), "minimum_distance":BODY_DISTANCE, "player_center_bound":ARENA_HALF-HUNTER_RADIUS, "monster_center_bound":ARENA_HALF-MONSTER_RADIUS}
+	if monster.sandbox_special.kind == "slam" and monster.sandbox_special.stage in ["windup","ascent","hover"]:
+		monster.sandbox_special.origin = monster.state.position*0.01
+	monster.space_feedback(wall,blocked,previous_monster,ARENA_HALF-MONSTER_RADIUS)
+	return {"monster_grounded":monster_grounded,"hunter_grounded":hunter_grounded,"vertical_overlap":vertical_overlap,"grounded_body":grounded, "swept":swept, "toi":toi, "blocked":blocked, "monster_wall":wall, "distance":p.distance_to(m), "minimum_distance":BODY_DISTANCE, "player_center_bound":ARENA_HALF-HUNTER_RADIUS, "monster_center_bound":ARENA_HALF-MONSTER_RADIUS}

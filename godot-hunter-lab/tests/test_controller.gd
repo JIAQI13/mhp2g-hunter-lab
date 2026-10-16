@@ -22,7 +22,7 @@ func _initialize() -> void:
 		"source":"tools/hunter_action_reference.py / normal + GS contracts / original 09a99890,09a9bd80,09a86918,09a641c8,09c3d640,08865dcc,08865e8c",
 		"original_game_equivalence":false,"visual_qa":"skipped; main agent owns GUI",
 		"limitations":["Godot yaw/floor/cosine adaptation, not PSP VFPU", "source attack-window gate and complete spawn notifications implemented; HunterCombat owns separate neutral cube lifetime/geometry/HP sandbox, not original monster equivalence", "danger upstream external snapshot only; map/task/ledge/interrupt unmodeled; exhausted run34 flat-idle adaptation; stamina skill0x18 unmodeled", "GS2/14/15/17/18 forced gallery only; source input unverified"]}
-	var output = FileAccess.open("res://tests/controller_test_results.json",FileAccess.WRITE)
+	var output = FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/controller_test_results.json"),FileAccess.WRITE)
 	if output != null:
 		output.store_string(JSON.stringify(results,"\t"))
 	print("CONTROLLER TESTS ",checks.size()," passed / ",failures.size()," failed; ",ticks," ticks")

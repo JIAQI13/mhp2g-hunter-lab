@@ -57,7 +57,7 @@ func _initialize() -> void:
 		_fair_loop()
 	profiles["completed_suite"] = {"elapsed_seconds":float(Time.get_ticks_usec()-started)/1000000.0, "simulation_ticks":simulation_ticks, "godot_static_memory_bytes":OS.get_static_memory_usage(), "godot_static_memory_peak_bytes":OS.get_static_memory_peak_usage(), "cache":"warm imported assets; cold/warm classification not controlled", "cpu_seconds":"external /usr/bin/time -l", "peak_process_family_rss":"external /usr/bin/time -l; single headless process", "agent_tokens":"unmeasured; no equivalent before workflow"}
 	var results: Dictionary = {"engine":Engine.get_version_info().string, "passed":checks.size(), "failed":failures.size(), "checks":checks, "failures":failures, "profiles":profiles, "coverage":{"real_assets":true, "real_controllers":true, "normal_actual_ai":profiles.get("fair_loop", {}), "fixtures":"explicit ai_enabled=false positions/HP/window state for isolated boundaries; not original game recording", "visual_qa":"skipped nonvisual simulation; no scene changes", "original_game_equivalence":false}, "limits":session.limits, "events_interface":{"outgoing":"monster_damage", "contact_queue":"incoming_contact status pending/guarded, damage20/impact/source", "submitted_next_tick":["player_damage", "player_guard", "player_dead"], "terminal":"round_end outcome victory/defeat", "unknown_air":"incoming_not_ready", "raw_producer":"animation/set/request/attack_spawn/monster_reaction/monster_rage/dead with actor"}, "trace":trace, "incoming_contacts":incoming, "outgoing_hits":outgoing, "player_damage_events":damage_events}
-	var file = FileAccess.open("res://tests/hunt_session_results.json", FileAccess.WRITE)
+	var file = FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/hunt_session_results.json"), FileAccess.WRITE)
 	if file != null:
 		file.store_string(JSON.stringify(results, "\t"))
 	else:
@@ -257,7 +257,7 @@ func _incoming_checks() -> void:
 
 func _space_checks() -> void:
 	reset_fixture(true, Vector3(0,0,350), Vector3.ZERO)
-	for i in range(30):
+	for i in range(90):
 		step()
 		if monster.state.mode == "charge":
 			break

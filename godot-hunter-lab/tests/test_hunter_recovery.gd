@@ -15,7 +15,7 @@ func _initialize() -> void:
 	controller.configure(animator)
 	if failures.is_empty():
 		_run_checks()
-	var output = FileAccess.open("res://tests/hunter_recovery_results.json",FileAccess.WRITE)
+	var output = FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/hunter_recovery_results.json"),FileAccess.WRITE)
 	output.store_string(JSON.stringify({"engine":Engine.get_version_info().string,"passed":checks.size(),
 		"failed":failures.size(),"ticks":ticks,"checks":checks,"failures":failures,
 		"equivalence":false,"scope":"真实Animator+选定kind0地面轻/重/起身/死亡入口；guard削血沙盒；无原游戏执行",

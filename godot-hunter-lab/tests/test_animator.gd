@@ -147,7 +147,7 @@ func _run() -> void:
 	_test_restored(animator)
 	_test_data_selected_tracks()
 	print("GENERAL ANIMATOR TESTS checks=%d failures=%d" % [checks, failures])
-	var output := FileAccess.open("res://tests/animator_test_results.json", FileAccess.WRITE)
+	var output := FileAccess.open(preload("res://tests/result_output.gd").path("res://tests/animator_test_results.json"), FileAccess.WRITE)
 	output.store_string(JSON.stringify({"schema_version": 1, "checks": checks, "legacy_checks": legacy_checks, "failures": failures, "clips": sampled_clips, "samples": samples, "pairs": pairs, "total_clips":132, "restored_clips":14, "restored_samples":84, "restored_pairs":7, "elapsed_seconds": float(Time.get_ticks_usec() - started) / 1000000.0, "engine": Engine.get_version_info()}, "\t") + "\n")
 	quit(0 if failures == 0 else 1)
 
